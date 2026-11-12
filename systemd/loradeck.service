@@ -1,0 +1,30 @@
+[Unit]
+Description=LoRaDeck - Awaro Gateway Companion
+Documentation=https://github.com/HatchetMan111/loradeck-proxmox
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@/app
+EnvironmentFile=/etc/loradeck/config.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=@APP_DIR@/app
+ExecStart=@APP_DIR@/venv/bin/uvicorn loradeck.main:app --host 0.0.0.0 --port @APP_PORT@ --proxy-headers
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=loradeck
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/loradeck
+
+[Install]
+WantedBy=multi-user.target
