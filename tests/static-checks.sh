@@ -85,6 +85,8 @@ for pattern in \
   'wait_for_dns' \
   'dns_candidates' \
   'chmod 0644 /etc/resolv.conf' \
+  'APT::Sandbox::User=root' \
+  'APT-Diagnose' \
   '--dns LIST' \
   'APT-Versuch' \
   'LORADECK_ADMIN_HASH' \

@@ -205,7 +205,12 @@ fi
 
 msg_info "Pakete installieren"
 export DEBIAN_FRONTEND=noninteractive
-APT_OPTS=(-qq -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true)
+chmod 0644 /etc/resolv.conf
+dpkg --configure -a >/dev/null 2>&1 || true
+if id _apt >/dev/null 2>&1 && ! su -s /bin/sh _apt -c 'getent hosts deb.debian.org' >/dev/null 2>&1; then
+  msg_warn "_apt kann DNS nicht aufloesen - APT-Sandbox wird fuer die Installation deaktiviert"
+fi
+APT_OPTS=(-qq -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true -o APT::Sandbox::User=root)
 apt_ok=0
 for attempt in 1 2 3 4 5; do
   if apt-get update "${APT_OPTS[@]}" \
@@ -219,7 +224,17 @@ for attempt in 1 2 3 4 5; do
   sleep $((attempt * 5))
   ensure_dns || true
 done
-[[ "$apt_ok" == "1" ]] || die "Paketinstallation nach 5 Versuchen fehlgeschlagen"
+if [[ "$apt_ok" != "1" ]]; then
+  echo "--- APT-Diagnose ---"
+  ls -l /etc/resolv.conf 2>&1 || true
+  cat /etc/resolv.conf 2>&1 || true
+  getent ahostsv4 deb.debian.org 2>&1 || true
+  if id _apt >/dev/null 2>&1; then
+    su -s /bin/sh _apt -c 'getent ahostsv4 deb.debian.org' 2>&1 || true
+  fi
+  apt-get update "${APT_OPTS[@]}" 2>&1 | tail -n 40 || true
+  die "Paketinstallation nach 5 Versuchen fehlgeschlagen"
+fi
 msg_ok "Pakete installiert"
 
 NODE_MAJOR="$(node --version | sed 's/^v//' | cut -d. -f1)"

@@ -56,9 +56,11 @@ Upstream und dem Default-Gateway und übergibt sie an `pct create` sowie den
 Inner-Installer. Der Container-Installer testet die Kandidaten einzeln, schreibt
 den ersten funktionierenden Nameserver, setzt `/etc/resolv.conf` auf `0644`
 (damit der `_apt`-Benutzer DNS lesen kann) und wiederholt `apt-get update` +
-`apt-get install --fix-missing` bis zu fünfmal mit Backoff. Bei Totalausfall
-werden Rechte, Inhalt, `_apt`-Auflösung, Interfaces, Route und DNS-Port 53
-diagnostiziert.
+`apt-get install --fix-missing` bis zu fünfmal mit Backoff. Falls `_apt` DNS
+nicht auflösen kann, läuft APT während der Installation ohne Sandbox
+(`APT::Sandbox::User=root`). Bei Totalausfall werden Rechte, Inhalt,
+`_apt`-Auflösung, Interfaces, Route, DNS-Port 53 und ein erneutes
+`apt-get update` diagnostiziert.
 
 ### Installer-CT-ID-Kollision (simuliert)
 
