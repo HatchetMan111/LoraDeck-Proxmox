@@ -49,14 +49,15 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/HatchetMan111/loradeck-p
 
 Der Installer legt einen unprivilegierten Debian-12-LXC an (Standard: 2 vCPU,
 2048 MB RAM, 8 GB Disk, DHCP, `onboot: 1`), baut Frontend und Backend, richtet
-systemd und ufw ein und startet den Dienst auf Port `8080`.
+systemd und ufw ein und startet den Dienst auf Port `8080`. Belegte CT-IDs
+werden automatisch übersprungen; vorhandene fremde Container bleiben unberührt.
 
 ### Optionen
 
 | Option | Bedeutung |
 | --- | --- |
 | `--ctid ID` | CT-ID (Standard: nächste freie) |
-| `--hostname NAME` | Container-Hostname (Standard: `loradeck`) |
+| `--hostname NAME` | Container-Hostname (Standard: `LoRaWan`) |
 | `--cores N` / `--ram MB` / `--disk GB` | Ressourcen |
 | `--storage NAME` | Storage für die Disk |
 | `--bridge NAME` | Linux-Bridge (Standard: `vmbr0`) |
@@ -65,7 +66,7 @@ systemd und ufw ein und startet den Dienst auf Port `8080`.
 | `--gateway-url URL` | Gateway-URL vorbelegen |
 | `--gateway-auth USER:PASS` | Gateway-Basic-Auth setzen |
 | `--repo URL` / `--ref REF` | Git-Quelle |
-| `--force` | Fremden Container mit dieser ID entfernen |
+| `--force` | Fremden Container mit dieser ID entfernen (nur mit `--ctid`) |
 | `--yes` | nicht-interaktiv |
 | `--debug` | `bash -x` und erweiterte Diagnose |
 

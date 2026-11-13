@@ -49,6 +49,24 @@ Alle statischen Pruefungen bestanden.
 Geprüft: `bash -n`, `shellcheck`, systemd-Härtung, Host-/Container-Installer,
 Repo-Struktur und README-Einzeiler.
 
+### Installer-CT-ID-Kollision (simuliert)
+
+Die Auswahllogik wurde mit Stub-Kommandos ohne Proxmox geprüft:
+
+```text
+pvesh nextid -> 110
+CT 110 -> hostname: releasenotes
+=> WARN: CT 110 ist belegt (releasenotes) - naechste freie ID
+=> CTID=111
+
+pct create 111 -> "already exists"
+=> WARN: CT 111 ist inzwischen belegt - naechste freie ID
+=> erstellt als CTID=112
+```
+
+Damit werden fremde Container nicht überschrieben; `--force` greift nur noch
+bei explizit angegebener `--ctid`.
+
 ### Lokaler Smoke-Test
 
 ```text

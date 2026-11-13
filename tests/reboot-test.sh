@@ -42,8 +42,8 @@ command -v pct >/dev/null || die "pct nicht gefunden - kein Proxmox-VE-Host?"
 pct config "$CTID" >/dev/null 2>&1 || die "CT ${CTID} existiert nicht"
 
 HOSTNAME_CT="$(pct config "$CTID" | awk -F': ' '/^hostname:/{print $2}')"
-if [[ "$HOSTNAME_CT" != "loradeck" ]]; then
-  msg "Hinweis: CT-Hostname ist '${HOSTNAME_CT}' statt 'loradeck'"
+if [[ "${HOSTNAME_CT,,}" != "lorawan" ]]; then
+  msg "Hinweis: CT-Hostname ist '${HOSTNAME_CT}' (Standard: LoRaWan)"
 fi
 
 mkdir -p "$(dirname "$OUT")"

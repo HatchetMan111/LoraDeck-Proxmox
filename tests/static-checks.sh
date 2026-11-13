@@ -56,6 +56,10 @@ echo
 echo "== Host-Installer =="
 for pattern in \
   'pvesh get /cluster/nextid' \
+  'ctid_in_use' \
+  'CTID_EXPLICIT' \
+  'CT_HOSTNAME="LoRaWan"' \
+  '--force nur zusammen mit --ctid' \
   '--onboot 1' \
   '--unprivileged 1' \
   'set -euo pipefail' \

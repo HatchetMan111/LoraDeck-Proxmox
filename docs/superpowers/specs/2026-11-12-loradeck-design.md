@@ -3,7 +3,7 @@
 **Datum:** 2026-11-12
 **Status:** Approved (Design), bereit für Implementierungsplan
 **Repo:** https://github.com/HatchetMan111/loradeck-proxmox
-**App-ID:** `loradeck` · **Port:** `8080` · **CT-Hostname:** `loradeck`
+**App-ID:** `loradeck` · **Port:** `8080` · **CT-Hostname:** `LoRaWan`
 
 ## 1. Ziel
 
@@ -208,7 +208,7 @@ deutscher Meldung weitergereicht.
 
 1. Root-, Proxmox- (`pct`, `pveam`, `pvesh`, `/etc/pve`) Prüfung.
 2. CT-ID: `pvesh get /cluster/nextid`, sofern nicht `--ctid`.
-3. Existiert die ID: gleicher Hostname `loradeck` → Update-Modus (Code/Unit
+3. Existiert die ID: gleicher Hostname `LoRaWan` → Update-Modus (Code/Unit
    aktualisieren, DB/Secret/Admin-Passwort behalten); fremder Hostname →
    Abbruch, außer `--force`.
 4. Debian-12-Template sicherstellen, Storage automatisch ermitteln.

@@ -11,7 +11,8 @@ APP="LoRaDeck"
 APP_ID="loradeck"
 APP_PORT=8080
 CTID=""
-CT_HOSTNAME="loradeck"
+CTID_EXPLICIT=0
+CT_HOSTNAME="LoRaWan"
 CORES=2
 RAM_MB=2048
 SWAP_MB=512
@@ -34,12 +35,23 @@ LOG_FILE="/var/log/loradeck-install.log"
 INNER_TMP=""
 UPDATE_ONLY=0
 ROOT_PW_SET=0
+CT_CREATED=0
+CREATE_ERR=""
 
 msg_info()  { echo -e "\e[34m[INFO]\e[0m  $*"; }
 msg_ok()    { echo -e "\e[32m[OK]\e[0m    $*"; }
 msg_warn()  { echo -e "\e[33m[WARN]\e[0m  $*"; }
 msg_error() { echo -e "\e[31m[ERROR]\e[0m $*" >&2; }
 die()       { msg_error "$*"; exit 1; }
+
+ctid_in_use() {
+  local id="$1"
+  pct config "$id" >/dev/null 2>&1 || qm config "$id" >/dev/null 2>&1
+}
+
+ctid_hostname() {
+  pct config "$1" 2>/dev/null | awk -F': ' '/^hostname:/{print $2; exit}'
+}
 
 cleanup() {
   if [[ -n "${ADMIN_TMP:-}" && -f "${ADMIN_TMP:-}" ]]; then
@@ -50,6 +62,9 @@ cleanup() {
   fi
   if [[ -n "${INNER_TMP:-}" && -f "${INNER_TMP:-}" && "${INNER_TMP}" != "${LOCAL_INNER:-}" ]]; then
     rm -f "$INNER_TMP"
+  fi
+  if [[ -n "${CREATE_ERR:-}" && -f "${CREATE_ERR:-}" ]]; then
+    rm -f "$CREATE_ERR"
   fi
 }
 trap cleanup EXIT
@@ -96,25 +111,38 @@ on_error() {
   {
     echo
     msg_error "Abbruch (Exit ${code}) in Zeile ${line}: ${cmd}"
-    if [[ -n "${CTID:-}" ]] && pct status "$CTID" >/dev/null 2>&1; then
-      echo "--- Container-Status ---"
-      pct status "$CTID" 2>&1 || true
-      echo "--- CT-Konfiguration ---"
-      pct config "$CTID" 2>&1 | head -n 40 || true
-      echo "--- Container-Install-Log (letzte 80 Zeilen) ---"
-      pct exec "$CTID" -- tail -n 80 /var/log/loradeck-install.log 2>&1 || true
-      echo "--- journalctl -u ${APP_ID} ---"
-      pct exec "$CTID" -- journalctl -u "$APP_ID" -n 80 --no-pager 2>&1 || true
-      echo "--- Ports im Container ---"
-      pct exec "$CTID" -- ss -tlnp 2>&1 | head -30 || true
+    if [[ -n "${CTID:-}" ]]; then
+      if [[ "${CT_CREATED:-0}" == "1" || "${UPDATE_ONLY:-0}" == "1" ]]; then
+        if pct status "$CTID" >/dev/null 2>&1; then
+          echo "--- Container-Status ---"
+          pct status "$CTID" 2>&1 || true
+          echo "--- CT-Konfiguration ---"
+          pct config "$CTID" 2>&1 | head -n 40 || true
+          echo "--- Container-Install-Log (letzte 80 Zeilen) ---"
+          pct exec "$CTID" -- tail -n 80 /var/log/loradeck-install.log 2>&1 || true
+          echo "--- journalctl -u ${APP_ID} ---"
+          pct exec "$CTID" -- journalctl -u "$APP_ID" -n 80 --no-pager 2>&1 || true
+          echo "--- Ports im Container ---"
+          pct exec "$CTID" -- ss -tlnp 2>&1 | head -30 || true
+        fi
+      elif [[ -n "${EXISTING_HOST:-}" ]]; then
+        echo "--- Container ${CTID} ---"
+        echo "Dieser Container gehoert zu '${EXISTING_HOST}', nicht zu ${APP}."
+        echo "Er wurde nicht veraendert."
+      fi
     fi
     echo "--- Host-Log: ${LOG_FILE} ---"
     tail -n 80 "$LOG_FILE" 2>/dev/null || true
     echo
     echo "Naechster Schritt:"
-    echo "  pct enter ${CTID:-<ID>}"
-    echo "  bash /root/loradeck-inner.sh --debug --port ${APP_PORT}"
-    echo "oder Installer erneut mit --debug starten."
+    if [[ "${CT_CREATED:-0}" == "1" || "${UPDATE_ONLY:-0}" == "1" ]]; then
+      echo "  pct enter ${CTID:-<ID>}"
+      echo "  bash /root/loradeck-inner.sh --debug --port ${APP_PORT}"
+      echo "oder Installer erneut mit --debug starten."
+    else
+      echo "  Installer mit einer freien ID erneut starten, z. B.:"
+      echo "  bash -c \"\$(curl -fsSL ${REPO_URL/github.com/raw.githubusercontent.com}/${REPO_REF}/install/loradeck.sh)\" -- --ctid <ID>"
+    fi
   } >&2
   exit "$code"
 }
@@ -149,7 +177,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --ctid) CTID="$2"; shift 2;;
+    --ctid) CTID="$2"; CTID_EXPLICIT=1; shift 2;;
     --hostname) CT_HOSTNAME="$2"; shift 2;;
     --cores) CORES="$2"; shift 2;;
     --ram) RAM_MB="$2"; shift 2;;
@@ -186,7 +214,7 @@ fi
 if ! [[ "$DISK_GB" =~ ^[0-9]+$ ]] || ! (( DISK_GB >= 4 )); then
   die "Ungueltige Disk: ${DISK_GB}"
 fi
-if ! [[ "$CT_HOSTNAME" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]]; then
+if ! [[ "$CT_HOSTNAME" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
   die "Ungueltiger Hostname: ${CT_HOSTNAME}"
 fi
 if [[ -n "$ADMIN_PASSWORD" && "$ADMIN_PASSWORD" == *$'\n'* ]]; then
@@ -226,13 +254,22 @@ curl -fsS --max-time 10 -o /dev/null https://raw.githubusercontent.com \
 if [[ -z "$CTID" ]]; then
   CTID="$(pvesh get /cluster/nextid 2>/dev/null | tr -d '"' | tr -d '[:space:]')"
   [[ "$CTID" =~ ^[0-9]+$ ]] || die "Konnte keine freie CT-ID ermitteln"
+  id_tries=0
+  while ctid_in_use "$CTID"; do
+    EXISTING_HOST="$(ctid_hostname "$CTID")"
+    [[ -n "$EXISTING_HOST" && "${EXISTING_HOST,,}" == "${CT_HOSTNAME,,}" ]] && break
+    msg_warn "CT ${CTID} ist belegt (${EXISTING_HOST:-VM}) - naechste freie ID"
+    CTID=$((CTID + 1))
+    id_tries=$((id_tries + 1))
+    (( id_tries < 1000 )) || die "Keine freie CT-ID gefunden"
+  done
 fi
 msg_ok "CT-ID: ${CTID}"
 
 EXISTING_HOST=""
 if pct config "$CTID" >/dev/null 2>&1; then
   EXISTING_HOST="$(pct config "$CTID" | awk -F': ' '/^hostname:/{print $2}')"
-  if [[ "$EXISTING_HOST" == "$CT_HOSTNAME" ]]; then
+  if [[ "${EXISTING_HOST,,}" == "${CT_HOSTNAME,,}" ]]; then
     msg_warn "CT ${CTID} (${CT_HOSTNAME}) existiert - Update-Modus"
     UPDATE_ONLY=1
     if [[ "$(pct status "$CTID" | awk '{print $2}')" != "running" ]]; then
@@ -245,6 +282,9 @@ if pct config "$CTID" >/dev/null 2>&1; then
     fi
   else
     if [[ "$FORCE" == "1" ]]; then
+      if [[ "$CTID_EXPLICIT" != "1" ]]; then
+        die "CT ${CTID} ist belegt; --force nur zusammen mit --ctid verwenden."
+      fi
       msg_warn "CT ${CTID} (${EXISTING_HOST}) wird auf Wunsch (--force) entfernt"
       pct stop "$CTID" 2>/dev/null || true
       pct destroy "$CTID" --purge
@@ -253,6 +293,8 @@ if pct config "$CTID" >/dev/null 2>&1; then
       die "CT ${CTID} existiert bereits mit Hostname '${EXISTING_HOST}'. Andere ID waehlen oder --force."
     fi
   fi
+elif qm config "$CTID" >/dev/null 2>&1; then
+  die "ID ${CTID} ist eine VM. Andere ID waehlen."
 fi
 
 if [[ -n "$ADMIN_PASSWORD" ]]; then
@@ -313,17 +355,41 @@ if [[ "$UPDATE_ONLY" == "0" ]]; then
   if [[ "$DEBUG" == "1" ]]; then
     set +x
   fi
-  pct create "$CTID" "$TEMPLATE_PATH" \
-    --hostname "$CT_HOSTNAME" \
-    --cores "$CORES" \
-    --memory "$RAM_MB" \
-    --swap "$SWAP_MB" \
-    --rootfs "${STORAGE}:${DISK_GB}" \
-    --net0 "name=eth0,bridge=${BRIDGE},ip=dhcp" \
-    --unprivileged 1 \
-    --onboot 1 \
-    --ostype debian \
-    --description "${APP} - lokaler Awaro-Gateway-Begleiter"
+  CREATE_ERR="$(mktemp)"
+  chmod 600 "$CREATE_ERR"
+  create_try=0
+  while :; do
+    create_try=$((create_try + 1))
+    if pct create "$CTID" "$TEMPLATE_PATH" \
+      --hostname "$CT_HOSTNAME" \
+      --cores "$CORES" \
+      --memory "$RAM_MB" \
+      --swap "$SWAP_MB" \
+      --rootfs "${STORAGE}:${DISK_GB}" \
+      --net0 "name=eth0,bridge=${BRIDGE},ip=dhcp" \
+      --unprivileged 1 \
+      --onboot 1 \
+      --ostype debian \
+      --description "${APP} - lokaler Awaro-Gateway-Begleiter" 2>"$CREATE_ERR"; then
+      CT_CREATED=1
+      break
+    fi
+    cat "$CREATE_ERR" >&2
+    if [[ "$CTID_EXPLICIT" != "1" ]] && grep -qi 'already exists' "$CREATE_ERR"; then
+      msg_warn "CT ${CTID} ist inzwischen belegt - naechste freie ID"
+      CTID=$((CTID + 1))
+      while ctid_in_use "$CTID"; do
+        EXISTING_HOST="$(ctid_hostname "$CTID")"
+        [[ -n "$EXISTING_HOST" && "${EXISTING_HOST,,}" == "${CT_HOSTNAME,,}" ]] && break
+        CTID=$((CTID + 1))
+      done
+      (( create_try < 20 )) || die "Keine freie CT-ID gefunden"
+      continue
+    fi
+    rm -f "$CREATE_ERR"; CREATE_ERR=""
+    die "Container ${CTID} konnte nicht erstellt werden"
+  done
+  rm -f "$CREATE_ERR"; CREATE_ERR=""
   if [[ "$DEBUG" == "1" ]]; then
     set -x
   fi
