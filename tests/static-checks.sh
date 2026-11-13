@@ -84,6 +84,7 @@ for pattern in \
   'loradeck.service' \
   'wait_for_dns' \
   'dns_candidates' \
+  'chmod 0644 /etc/resolv.conf' \
   '--dns LIST' \
   'APT-Versuch' \
   'LORADECK_ADMIN_HASH' \

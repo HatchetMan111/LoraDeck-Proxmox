@@ -54,12 +54,14 @@ dns_candidates() {
 set_dns() {
   local ns="$1"
   if printf 'nameserver %s\noptions timeout:2 attempts:2\n' "$ns" > /etc/resolv.conf 2>/dev/null; then
+    chmod 0644 /etc/resolv.conf
     return 0
   fi
   if [[ -L /etc/resolv.conf ]]; then
     msg_warn "/etc/resolv.conf ist ein Symlink nach $(readlink /etc/resolv.conf) - ersetze ihn"
     rm -f /etc/resolv.conf
     printf 'nameserver %s\noptions timeout:2 attempts:2\n' "$ns" > /etc/resolv.conf
+    chmod 0644 /etc/resolv.conf
     return
   fi
   return 1
@@ -182,7 +184,11 @@ rm -f /root/.loradeck-generated-password
 
 if ! ensure_dns; then
   echo "--- DNS-Diagnose ---"
+  ls -l /etc/resolv.conf 2>&1 || true
   cat /etc/resolv.conf 2>&1 || true
+  if id _apt >/dev/null 2>&1; then
+    su -s /bin/sh _apt -c 'getent hosts deb.debian.org' 2>&1 || true
+  fi
   ip -4 addr 2>&1 || true
   ip route 2>&1 || true
   getent hosts deb.debian.org 2>&1 || true
