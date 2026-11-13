@@ -28,6 +28,27 @@ msg_warn()  { echo -e "\e[33m[WARN]\e[0m  $*"; }
 msg_error() { echo -e "\e[31m[ERROR]\e[0m $*" >&2; }
 die()       { msg_error "$*"; exit 1; }
 
+wait_for_dns() {
+  local tries="${1:-120}" i
+  for ((i = 1; i <= tries; i++)); do
+    if getent hosts deb.debian.org >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+ensure_resolv_conf() {
+  if grep -Eq '^[[:space:]]*nameserver[[:space:]]+' /etc/resolv.conf 2>/dev/null; then
+    return 0
+  fi
+  msg_warn "Kein Nameserver in /etc/resolv.conf - setze Fallback-DNS 1.1.1.1/9.9.9.9"
+  if ! printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' > /etc/resolv.conf; then
+    msg_warn "Fallback-DNS konnte nicht geschrieben werden"
+  fi
+}
+
 cleanup() {
   if [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]]; then
     rm -rf "$TMP_DIR"
@@ -124,12 +145,32 @@ msg_info "LoRaDeck Installation startet (Port ${PORT})"
 [[ -f /etc/debian_version ]] || die "Debian wird erwartet"
 rm -f /root/.loradeck-generated-password
 
+ensure_resolv_conf
+if ! wait_for_dns 120; then
+  msg_warn "DNS-Aufloesung fehlgeschlagen - setze Fallback-DNS 1.1.1.1/9.9.9.9"
+  if ! printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' > /etc/resolv.conf; then
+    die "Fallback-DNS konnte nicht geschrieben werden"
+  fi
+  wait_for_dns 60 || die "Kein DNS im Container: deb.debian.org nicht aufloesbar"
+fi
+
 msg_info "Pakete installieren"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq -o Acquire::Retries=3
-apt-get install -y -qq -o Acquire::Retries=3 \
-  ca-certificates curl git openssl python3 python3-venv python3-pip \
-  sqlite3 ufw jq nodejs npm
+APT_OPTS=(-qq -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true)
+apt_ok=0
+for attempt in 1 2 3 4 5; do
+  if apt-get update "${APT_OPTS[@]}" \
+    && apt-get install -y "${APT_OPTS[@]}" \
+      ca-certificates curl git openssl python3 python3-venv python3-pip \
+      sqlite3 ufw jq nodejs npm; then
+    apt_ok=1
+    break
+  fi
+  msg_warn "APT-Versuch ${attempt}/5 fehlgeschlagen - warte $((attempt * 5))s"
+  sleep $((attempt * 5))
+  wait_for_dns 30 || true
+done
+[[ "$apt_ok" == "1" ]] || die "Paketinstallation nach 5 Versuchen fehlgeschlagen"
 msg_ok "Pakete installiert"
 
 NODE_MAJOR="$(node --version | sed 's/^v//' | cut -d. -f1)"

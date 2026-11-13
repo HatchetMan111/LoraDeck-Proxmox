@@ -80,6 +80,8 @@ for pattern in \
   'python3 -m venv' \
   '/healthz' \
   'loradeck.service' \
+  'wait_for_dns' \
+  'APT-Versuch' \
   'LORADECK_ADMIN_HASH' \
   'LORADECK_BACKUP_DIR'; do
   if grep -q -- "$pattern" install/loradeck-inner.sh; then

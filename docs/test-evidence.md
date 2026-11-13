@@ -49,6 +49,13 @@ Alle statischen Pruefungen bestanden.
 Geprüft: `bash -n`, `shellcheck`, systemd-Härtung, Host-/Container-Installer,
 Repo-Struktur und README-Einzeiler.
 
+### DNS-/APT-Wiederholung
+
+Der Container-Installer wartet vor `apt-get` auf DNS, setzt bei Bedarf
+Fallback-Nameserver und wiederholt `apt-get update` + `apt-get install` bis zu
+fünfmal mit Backoff. Der Host-Installer setzt nach 120s ohne DNS ebenfalls
+Fallback-Nameserver und prüft erneut.
+
 ### Installer-CT-ID-Kollision (simuliert)
 
 Die Auswahllogik wurde mit Stub-Kommandos ohne Proxmox geprüft:

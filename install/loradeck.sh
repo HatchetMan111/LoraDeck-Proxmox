@@ -429,6 +429,18 @@ for _ in $(seq 1 120); do
   fi
   sleep 1
 done
+if [[ "$ready" != "1" ]]; then
+  msg_warn "Kein DNS nach 120s - setze Fallback-Nameserver 1.1.1.1/9.9.9.9"
+  pct set "$CTID" --nameserver "1.1.1.1 9.9.9.9" >/dev/null 2>&1 || true
+  pct exec "$CTID" -- sh -c 'printf "nameserver 1.1.1.1\nnameserver 9.9.9.9\n" > /etc/resolv.conf' 2>/dev/null || true
+  for _ in $(seq 1 30); do
+    if pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+fi
 [[ "$ready" == "1" ]] || die "Container hat nach 120s kein DNS/Netz"
 
 msg_info "Inner-Installer uebertragen"
