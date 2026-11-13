@@ -13,6 +13,7 @@ APP_PORT=8080
 CTID=""
 CTID_EXPLICIT=0
 CT_HOSTNAME="LoRaWan"
+CT_DNS=""
 CORES=2
 RAM_MB=2048
 SWAP_MB=512
@@ -247,6 +248,20 @@ command -v pvesm >/dev/null || die "pvesm nicht gefunden"
 command -v openssl >/dev/null || die "openssl nicht gefunden"
 [[ -d /etc/pve ]] || die "/etc/pve fehlt - kein Proxmox-VE-Host?"
 
+HOST_GW="$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')"
+HOST_DNS="$(awk '/^[[:space:]]*nameserver[[:space:]]+/{print $2}' /etc/resolv.conf 2>/dev/null | grep -vE '^(127\.|::1$)' || true)"
+if [[ -z "$HOST_DNS" && -r /run/systemd/resolve/resolv.conf ]]; then
+  HOST_DNS="$(awk '/^[[:space:]]*nameserver[[:space:]]+/{print $2}' /run/systemd/resolve/resolv.conf | grep -vE '^(127\.|::1$)' || true)"
+fi
+CT_DNS="$(
+  {
+    if [[ -n "$HOST_DNS" ]]; then printf '%s\n' "$HOST_DNS"; fi
+    printf '%s\n' 1.1.1.1 9.9.9.9
+    if [[ -n "$HOST_GW" ]]; then printf '%s\n' "$HOST_GW"; fi
+  } | awk 'NF && !seen[$0]++' | paste -sd, -
+)"
+[[ -n "$CT_DNS" ]] || CT_DNS="1.1.1.1,9.9.9.9"
+
 msg_info "Internet pruefen"
 curl -fsS --max-time 10 -o /dev/null https://raw.githubusercontent.com \
   || msg_warn "raw.githubusercontent.com nicht erreichbar - Repo-Download koennte scheitern"
@@ -272,6 +287,7 @@ if pct config "$CTID" >/dev/null 2>&1; then
   if [[ "${EXISTING_HOST,,}" == "${CT_HOSTNAME,,}" ]]; then
     msg_warn "CT ${CTID} (${CT_HOSTNAME}) existiert - Update-Modus"
     UPDATE_ONLY=1
+    pct set "$CTID" --nameserver "$CT_DNS" >/dev/null 2>&1 || true
     if [[ "$(pct status "$CTID" | awk '{print $2}')" != "running" ]]; then
       msg_info "Container starten"
       pct start "$CTID"
@@ -362,6 +378,7 @@ if [[ "$UPDATE_ONLY" == "0" ]]; then
     create_try=$((create_try + 1))
     if pct create "$CTID" "$TEMPLATE_PATH" \
       --hostname "$CT_HOSTNAME" \
+      --nameserver "$CT_DNS" \
       --cores "$CORES" \
       --memory "$RAM_MB" \
       --swap "$SWAP_MB" \
@@ -422,7 +439,7 @@ fi
 
 msg_info "Auf Netzwerk im Container warten"
 ready=0
-for _ in $(seq 1 120); do
+for _ in $(seq 1 30); do
   if pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1; then
     ready=1
     break
@@ -430,18 +447,8 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 if [[ "$ready" != "1" ]]; then
-  msg_warn "Kein DNS nach 120s - setze Fallback-Nameserver 1.1.1.1/9.9.9.9"
-  pct set "$CTID" --nameserver "1.1.1.1 9.9.9.9" >/dev/null 2>&1 || true
-  pct exec "$CTID" -- sh -c 'printf "nameserver 1.1.1.1\nnameserver 9.9.9.9\n" > /etc/resolv.conf' 2>/dev/null || true
-  for _ in $(seq 1 30); do
-    if pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1; then
-      ready=1
-      break
-    fi
-    sleep 1
-  done
+  msg_warn "Kein DNS im Container - Inner-Installer richtet Fallback-DNS ein"
 fi
-[[ "$ready" == "1" ]] || die "Container hat nach 120s kein DNS/Netz"
 
 msg_info "Inner-Installer uebertragen"
 LOCAL_INNER="$(dirname -- "${BASH_SOURCE[0]:-}")/loradeck-inner.sh"
@@ -458,7 +465,7 @@ if [[ "$INNER_TMP" != "$LOCAL_INNER" ]]; then
   rm -f "$INNER_TMP"
 fi
 
-INNER_ARGS=(--port "$APP_PORT" --repo "$REPO_URL" --ref "$REPO_REF")
+INNER_ARGS=(--port "$APP_PORT" --repo "$REPO_URL" --ref "$REPO_REF" --dns "$CT_DNS")
 if [[ -n "$ADMIN_TMP" && -f "$ADMIN_TMP" ]]; then
   pct push "$CTID" "$ADMIN_TMP" /root/.loradeck-admin --perms 600
   INNER_ARGS+=(--admin-password-file /root/.loradeck-admin)

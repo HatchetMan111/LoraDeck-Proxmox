@@ -19,6 +19,7 @@ SOURCE_DIR=""
 ADMIN_PASSWORD_FILE=""
 GATEWAY_URL_ARG=""
 GATEWAY_AUTH_FILE=""
+DNS_ARG=""
 DEBUG=0
 LOG_FILE="/var/log/loradeck-install.log"
 
@@ -29,9 +30,9 @@ msg_error() { echo -e "\e[31m[ERROR]\e[0m $*" >&2; }
 die()       { msg_error "$*"; exit 1; }
 
 wait_for_dns() {
-  local tries="${1:-120}" i
+  local tries="${1:-3}" i
   for ((i = 1; i <= tries; i++)); do
-    if getent hosts deb.debian.org >/dev/null 2>&1; then
+    if timeout 5 getent hosts deb.debian.org >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -39,14 +40,46 @@ wait_for_dns() {
   return 1
 }
 
-ensure_resolv_conf() {
-  if grep -Eq '^[[:space:]]*nameserver[[:space:]]+' /etc/resolv.conf 2>/dev/null; then
+dns_candidates() {
+  local gw
+  gw="$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')"
+  {
+    if [[ -n "$DNS_ARG" ]]; then tr ',' '\n' <<<"$DNS_ARG"; fi
+    awk '/^[[:space:]]*nameserver[[:space:]]+/{print $2}' /etc/resolv.conf 2>/dev/null || true
+    [[ -n "$gw" ]] && printf '%s\n' "$gw"
+    printf '%s\n' 1.1.1.1 9.9.9.9 8.8.8.8
+  } | awk 'NF && !seen[$0]++'
+}
+
+set_dns() {
+  local ns="$1"
+  if printf 'nameserver %s\noptions timeout:2 attempts:2\n' "$ns" > /etc/resolv.conf 2>/dev/null; then
     return 0
   fi
-  msg_warn "Kein Nameserver in /etc/resolv.conf - setze Fallback-DNS 1.1.1.1/9.9.9.9"
-  if ! printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' > /etc/resolv.conf; then
-    msg_warn "Fallback-DNS konnte nicht geschrieben werden"
+  if [[ -L /etc/resolv.conf ]]; then
+    msg_warn "/etc/resolv.conf ist ein Symlink nach $(readlink /etc/resolv.conf) - ersetze ihn"
+    rm -f /etc/resolv.conf
+    printf 'nameserver %s\noptions timeout:2 attempts:2\n' "$ns" > /etc/resolv.conf
+    return
   fi
+  return 1
+}
+
+ensure_dns() {
+  local ns
+  while IFS= read -r ns; do
+    [[ -n "$ns" ]] || continue
+    if ! set_dns "$ns"; then
+      msg_warn "DNS ${ns} konnte nicht gesetzt werden"
+      continue
+    fi
+    if wait_for_dns 3; then
+      msg_ok "DNS-Server: ${ns}"
+      return 0
+    fi
+    msg_warn "DNS-Server ${ns} nicht erreichbar"
+  done < <(dns_candidates)
+  return 1
 }
 
 cleanup() {
@@ -102,6 +135,7 @@ Usage: bash loradeck-inner.sh [OPTIONEN]
   --admin-password-file P   Datei mit dem neuen Admin-Passwort
   --gateway-url URL         Gateway-URL vorbelegen (sonst spaeter in der UI)
   --gateway-auth-file P     Datei mit Gateway-Basic-Auth (USER:PASS)
+  --dns LIST                Kommagetrennte DNS-Server (vom Host)
   --debug                   bash -x und erweiterte Diagnose
   -h, --help                Hilfe
 EOF
@@ -116,6 +150,7 @@ while [[ $# -gt 0 ]]; do
     --admin-password-file) ADMIN_PASSWORD_FILE="$2"; shift 2;;
     --gateway-url) GATEWAY_URL_ARG="$2"; shift 2;;
     --gateway-auth-file) GATEWAY_AUTH_FILE="$2"; shift 2;;
+    --dns) DNS_ARG="$2"; shift 2;;
     --debug) DEBUG=1; shift;;
     -h|--help) usage; exit 0;;
     *) die "Unbekannte Option: $1";;
@@ -145,13 +180,21 @@ msg_info "LoRaDeck Installation startet (Port ${PORT})"
 [[ -f /etc/debian_version ]] || die "Debian wird erwartet"
 rm -f /root/.loradeck-generated-password
 
-ensure_resolv_conf
-if ! wait_for_dns 120; then
-  msg_warn "DNS-Aufloesung fehlgeschlagen - setze Fallback-DNS 1.1.1.1/9.9.9.9"
-  if ! printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' > /etc/resolv.conf; then
-    die "Fallback-DNS konnte nicht geschrieben werden"
-  fi
-  wait_for_dns 60 || die "Kein DNS im Container: deb.debian.org nicht aufloesbar"
+if ! ensure_dns; then
+  echo "--- DNS-Diagnose ---"
+  cat /etc/resolv.conf 2>&1 || true
+  ip -4 addr 2>&1 || true
+  ip route 2>&1 || true
+  getent hosts deb.debian.org 2>&1 || true
+  while IFS= read -r ns; do
+    [[ -n "$ns" ]] || continue
+    if timeout 3 bash -c "echo >/dev/tcp/${ns}/53" 2>/dev/null; then
+      echo "DNS ${ns}: Port 53 erreichbar"
+    else
+      echo "DNS ${ns}: Port 53 nicht erreichbar"
+    fi
+  done < <(dns_candidates)
+  die "Kein funktionierender DNS-Server gefunden"
 fi
 
 msg_info "Pakete installieren"
@@ -160,7 +203,7 @@ APT_OPTS=(-qq -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::htt
 apt_ok=0
 for attempt in 1 2 3 4 5; do
   if apt-get update "${APT_OPTS[@]}" \
-    && apt-get install -y "${APT_OPTS[@]}" \
+    && apt-get install -y --fix-missing "${APT_OPTS[@]}" \
       ca-certificates curl git openssl python3 python3-venv python3-pip \
       sqlite3 ufw jq nodejs npm; then
     apt_ok=1
@@ -168,7 +211,7 @@ for attempt in 1 2 3 4 5; do
   fi
   msg_warn "APT-Versuch ${attempt}/5 fehlgeschlagen - warte $((attempt * 5))s"
   sleep $((attempt * 5))
-  wait_for_dns 30 || true
+  ensure_dns || true
 done
 [[ "$apt_ok" == "1" ]] || die "Paketinstallation nach 5 Versuchen fehlgeschlagen"
 msg_ok "Pakete installiert"

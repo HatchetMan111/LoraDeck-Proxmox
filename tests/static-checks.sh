@@ -59,6 +59,8 @@ for pattern in \
   'ctid_in_use' \
   'CTID_EXPLICIT' \
   'CT_HOSTNAME="LoRaWan"' \
+  'CT_DNS' \
+  '--nameserver' \
   '--force nur zusammen mit --ctid' \
   '--onboot 1' \
   '--unprivileged 1' \
@@ -81,6 +83,8 @@ for pattern in \
   '/healthz' \
   'loradeck.service' \
   'wait_for_dns' \
+  'dns_candidates' \
+  '--dns LIST' \
   'APT-Versuch' \
   'LORADECK_ADMIN_HASH' \
   'LORADECK_BACKUP_DIR'; do

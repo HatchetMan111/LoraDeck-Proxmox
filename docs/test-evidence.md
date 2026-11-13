@@ -51,10 +51,12 @@ Repo-Struktur und README-Einzeiler.
 
 ### DNS-/APT-Wiederholung
 
-Der Container-Installer wartet vor `apt-get` auf DNS, setzt bei Bedarf
-Fallback-Nameserver und wiederholt `apt-get update` + `apt-get install` bis zu
-fünfmal mit Backoff. Der Host-Installer setzt nach 120s ohne DNS ebenfalls
-Fallback-Nameserver und prüft erneut.
+Der Host ermittelt DNS-Server aus `/etc/resolv.conf`, dem systemd-resolved-
+Upstream und dem Default-Gateway und übergibt sie an `pct create` sowie den
+Inner-Installer. Der Container-Installer testet die Kandidaten einzeln, schreibt
+den ersten funktionierenden Nameserver und wiederholt `apt-get update` +
+`apt-get install --fix-missing` bis zu fünfmal mit Backoff. Bei Totalausfall
+werden `/etc/resolv.conf`, Interfaces, Route und DNS-Port 53 diagnostiziert.
 
 ### Installer-CT-ID-Kollision (simuliert)
 
